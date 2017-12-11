@@ -57,13 +57,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest='mode')
 
-    parser_a = subparsers.add_parser('train')
-    parser_a.add_argument('--no-cuda', action='store_true', default=False,
-                    help='disables CUDA training')
-    parser_a.add_argument('--init_type', default='glorot_uniform', 
-                          choices=['uniform', 'glorot_uniform'])
-    parser_a.add_argument('--optimizer', default='adam', choices=['sgd', 'adam'])
-    parser_a.add_argument('--loss', default='softmax', choices=['softmax', 'sigmoid'])
+    parser_train = subparsers.add_parser('train')
+    parser_train.add_argument('--use_cuda', action='store_true', default=True)
+    parser_train.add_argument('--init_type', default='glorot_uniform', choices=['uniform', 'glorot_uniform'])
+    parser_train.add_argument('--optimizer', default='adam', choices=['sgd', 'adam'])
+    parser_train.add_argument('--loss', default='softmax', choices=['softmax', 'sigmoid'])
+    parser_train.add_argument('--lr', type=float, default=1e-3)
+    parser_train.add_argument('--resume_model_path', type=str, default="")
     
     args = parser.parse_args()
     if args.mode == "train":

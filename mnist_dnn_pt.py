@@ -1,12 +1,14 @@
 """
 Summary:  mnist dnn pytorch example. 
 Author:   Qiuqiang Kong
-Usage:    $ python mnist_dnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax
+Usage:    $ python mnist_dnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax --lr=1e-3
+          $ python mnist_dnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax --lr=1e-4 --resume_model_path="models/md_3000iters.tar"
 Created:  2017.12.09
 Modified: - 
 """
 import numpy as np
 import time
+import os
 import argparse
 from sklearn import preprocessing
 import matplotlib.pyplot as plt
@@ -87,10 +89,13 @@ def glorot_uniform_weights(m):
         m.bias.data.fill_(0.)        
     
 def train(builder, args):
-    cuda = not args.no_cuda and torch.cuda.is_available()
+    cuda = args.use_cuda and torch.cuda.is_available()
     init_type = args.init_type
     opt_type = args.optimizer
     loss_type = args.loss
+    lr = args.lr
+    resume_model_path = args.resume_model_path
+    print("cuda:", cuda)
     
     # Load data. 
     (tr_x, tr_y, va_x, va_y, te_x, te_y) = pp_data.load_data()
@@ -105,14 +110,25 @@ def train(builder, args):
     va_x = scaler.transform(va_x)
     te_x = scaler.transform(te_x)
     
-    # Model & init weights. 
+    # Model. 
     model = builder(loss_type)
-    if init_type == 'uniform':
-        model.apply(uniform_weights)
-    elif init_type == 'glorot_uniform':
-        model.apply(glorot_uniform_weights)
+    
+    if os.path.isfile(resume_model_path):
+        # Load weights. 
+        print("Loading checkpoint '%s'" % resume_model_path)
+        checkpoint = torch.load(resume_model_path)
+        model.load_state_dict(checkpoint['state_dict'])
+        iter = checkpoint['iter']
     else:
-        raise Exception("Incorrect init_type!")
+        # Randomly init weights. 
+        print("Train from random initialization. ")
+        if init_type == 'uniform':
+            model.apply(uniform_weights)
+        elif init_type == 'glorot_uniform':
+            model.apply(glorot_uniform_weights)
+        else:
+            raise Exception("Incorrect init_type!")
+        iter = 0
         
     # Move model to GPU. 
     if cuda:
@@ -126,21 +142,19 @@ def train(builder, args):
     
     # Optimizer. 
     if opt_type == 'sgd':
-        optimizer = optim.SGD(model.parameters(), lr=1e-3, momentum=0.9)
+        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
     elif opt_type == 'adam':
-        optimizer = optim.Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+        optimizer = optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
     else:
         raise Exception("Optimizer wrong!")
     
     # Evaluate. 
     tr_err = eval(model, eval_tr_gen, [tr_x], [tr_y], cuda)
-    print("Initial train err: %f" % tr_err)
+    print("Iter: %d, train err: %f" % (iter, tr_err))
     te_err = eval(model, eval_te_gen, [te_x], [te_y], cuda)
-    print("Initial test: %f" % te_err)
+    print("Iter: %d, test err: %f" % (iter, te_err))
     
     # Train. 
-    loss_func = nn.CrossEntropyLoss()
-    iter = 0
     for batch_x, batch_y in tr_gen.generate(xs=[tr_x], ys=[tr_y]):
         # Move data to GPU. 
         t1 = time.time()
@@ -171,7 +185,7 @@ def train(builder, args):
         if loss_type == 'softmax':
             loss = F.nll_loss(output, batch_y)
         elif loss_type == 'sigmoid':
-            binary_cross_entropy(output, batch_y)
+            F.binary_cross_entropy(output, batch_y)
         else:
             raise Exception("Incorrect loss_type!")
             
@@ -196,19 +210,28 @@ def train(builder, args):
             te_err = eval(model, eval_te_gen, [te_x], [te_y], cuda)
             print("Iter: %d, test err: %f, time: %s" % (iter, te_err, time.time() - t1))
         
-        
+        # Save model. 
+        if iter % 1000 == 0:
+            save_out_dict = {'iter': iter, 
+                             'state_dict': model.state_dict(), 
+                             'optimizer': optimizer.state_dict(), 
+                             'te_err': te_err, }
+            save_out_path = "models/md_%diters.tar" % iter
+            pp_data.create_folder(os.path.dirname(save_out_path))
+            torch.save(save_out_dict, save_out_path)
+            print("Save model to %s" % save_out_path)
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest='mode')
 
-    parser_a = subparsers.add_parser('train')
-    parser_a.add_argument('--no-cuda', action='store_true', default=False,
-                    help='disables CUDA training')
-    parser_a.add_argument('--init_type', default='glorot_uniform', 
-                          choices=['uniform', 'glorot_uniform'])
-    parser_a.add_argument('--optimizer', default='adam', choices=['sgd', 'adam'])
-    parser_a.add_argument('--loss', default='softmax', choices=['softmax', 'sigmoid'])
+    parser_train = subparsers.add_parser('train')
+    parser_train.add_argument('--use_cuda', action='store_true', default=True)
+    parser_train.add_argument('--init_type', default='glorot_uniform', choices=['uniform', 'glorot_uniform'])
+    parser_train.add_argument('--optimizer', default='adam', choices=['sgd', 'adam'])
+    parser_train.add_argument('--loss', default='softmax', choices=['softmax', 'sigmoid'])
+    parser_train.add_argument('--lr', type=float, default=1e-3)
+    parser_train.add_argument('--resume_model_path', type=str, default="")
     
     args = parser.parse_args()
     if args.mode == "train":

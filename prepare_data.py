@@ -11,6 +11,10 @@ import cPickle
 import gzip
 import os
 
+def create_folder(fd):
+    if not os.path.exists(fd):
+        os.makedirs(fd)
+
 def load_data():
     dataset = 'mnist.pkl.gz'
     if not os.path.isfile(dataset):
