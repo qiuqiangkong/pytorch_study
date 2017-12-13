@@ -1,7 +1,9 @@
 """
 Summary:  mnist cnn pytorch example. 
+          te_err around 1%. 
 Author:   Qiuqiang Kong
-Usage:    $ python mnist_cnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax
+Usage:    $ python mnist_cnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax --lr=1e-3
+          $ python mnist_cnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax --lr=1e-4 --resume_model_path="models/md_3000iters.tar"
 Created:  2017.12.11
 Modified: - 
 """
@@ -19,17 +21,27 @@ from torch.autograd import Variable
 
 import prepare_data as pp_data
 from data_generator import DataGenerator
-from mnist_dnn_pt import train, eval, uniform_weights, glorot_uniform_weights
+from mnist_dnn_pt import train, eval
 
-def back_hook1(grad):
-    print 'back_hook1'
-    print grad
+def uniform_weights(m):
+    classname = m.__class__.__name__    
+    if classname.find('Linear') != -1 or classname.find('Conv2d') != -1:
+        scale = 0.1
+        m.weight.data = torch.nn.init.uniform(m.weight.data, -scale, scale)
+        m.bias.data.fill_(0.)
+
+def glorot_uniform_weights(m):
+    classname = m.__class__.__name__    
+    if classname.find('Linear') != -1 or classname.find('Conv2d') != -1:
+        # w = torch.nn.init.xavier_uniform(m.weight.data, gain=nn.init.calculate_gain('relu'))
+        w = torch.nn.init.xavier_uniform(m.weight.data)
+        m.weight.data = w
+        m.bias.data.fill_(0.)  
 
 class CNN(nn.Module):
-    def __init__(self, loss_type):
+    def __init__(self):
         super(CNN, self).__init__()
         
-        self.loss_type = loss_type
         self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(5, 5), stride=(1, 1), padding=(2, 2), bias=True)
         self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(5, 5), stride=(1, 1), padding=(2, 2), bias=True)
         self.fc1 = nn.Linear(64*7*7, 1024, bias=True)
@@ -44,14 +56,9 @@ class CNN(nn.Module):
         x = x.view(-1, 64*7*7)
         x = F.relu(self.fc1(x))
         x = F.dropout(x, p=0.2, training=self.training)
-        x5 = self.fc2(x)
+        x = self.fc2(x)
         
-        if self.loss_type == 'softmax':
-            return F.log_softmax(x5)
-        elif self.loss_type == 'sigmoid':
-            return F.sigmoid(x5)
-        else:
-            raise Exception("Incorrect loss_type!")
+        return x
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -68,6 +75,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.mode == "train":
         print(args)
-        train(builder=CNN, args=args)
+        if args.init_type == 'uniform':
+            init_weights = uniform_weights
+        elif args.init_type == 'glorot_uniform':
+            init_weights = glorot_uniform_weights
+        else:
+            raise Exception("Incorrect init_type!")
+        args.loss = 'softmax'
+        model = CNN()
+        train(model, init_weights=init_weights, args=args)
     else:
         raise Exception("Error!")

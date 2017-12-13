@@ -1,10 +1,11 @@
 """
 Summary:  mnist dnn pytorch example. 
+          te_err around 2%. 
 Author:   Qiuqiang Kong
 Usage:    $ python mnist_dnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax --lr=1e-3
           $ python mnist_dnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax --lr=1e-4 --resume_model_path="models/md_3000iters.tar"
 Created:  2017.12.09
-Modified: - 
+Modified: 2017.12.12
 """
 import numpy as np
 import time
@@ -48,9 +49,9 @@ class DNN(nn.Module):
             print x3          # observe forward
         
         if self.loss_type == 'softmax':
-            return F.log_softmax(x5)
+            return x5   # Return linear here and use F.cross_entropy() later. 
         elif self.loss_type == 'sigmoid':
-            return F.sigmoid(x5)
+            return F.sigmoid(x5)    # Use F.binary_cross_entropy() later. 
         else:
             raise Exception("Incorrect loss_type!")
     
@@ -88,7 +89,7 @@ def glorot_uniform_weights(m):
         m.weight.data = w
         m.bias.data.fill_(0.)        
     
-def train(builder, args):
+def train(model, init_weights, args):
     cuda = args.use_cuda and torch.cuda.is_available()
     init_type = args.init_type
     opt_type = args.optimizer
@@ -110,9 +111,6 @@ def train(builder, args):
     va_x = scaler.transform(va_x)
     te_x = scaler.transform(te_x)
     
-    # Model. 
-    model = builder(loss_type)
-    
     if os.path.isfile(resume_model_path):
         # Load weights. 
         print("Loading checkpoint '%s'" % resume_model_path)
@@ -122,12 +120,7 @@ def train(builder, args):
     else:
         # Randomly init weights. 
         print("Train from random initialization. ")
-        if init_type == 'uniform':
-            model.apply(uniform_weights)
-        elif init_type == 'glorot_uniform':
-            model.apply(glorot_uniform_weights)
-        else:
-            raise Exception("Incorrect init_type!")
+        model.apply(init_weights)
         iter = 0
         
     # Move model to GPU. 
@@ -183,7 +176,7 @@ def train(builder, args):
         
         # Loss. 
         if loss_type == 'softmax':
-            loss = F.nll_loss(output, batch_y)
+            loss = F.cross_entropy(output, batch_y)
         elif loss_type == 'sigmoid':
             F.binary_cross_entropy(output, batch_y)
         else:
@@ -236,6 +229,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.mode == "train":
         print(args)
-        train(builder=DNN, args=args)
+        if args.init_type == 'uniform':
+            init_weights = uniform_weights
+        elif args.init_type == 'glorot_uniform':
+            init_weights = glorot_uniform_weights
+        else:
+            raise Exception("Incorrect init_type!")
+        model = DNN(args.loss)
+        train(model=model, init_weights=init_weights, args=args)
     else:
         raise Exception("Error!")

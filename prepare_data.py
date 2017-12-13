@@ -29,6 +29,40 @@ def load_data():
     [te_X, te_y] = test_set
     f.close()
     return tr_X, tr_y, va_X, va_y, te_X, te_y
+
+
+
+# Load cifar data. 
+def load_cifar10():
+    def _load_file(path):
+        data_lb = cPickle.load(open(path, 'rb'))
+        return data_lb['data'], data_lb['labels']
+    
+    # load train data
+    dataset_dir = "/vol/vssp/msos/qk/Datasets/cifar10/cifar-10-batches-py"
+    
+    tr_x, tr_y = [], []
+    for na in ['data_batch_1', 'data_batch_2', 'data_batch_3', 'data_batch_4', 'data_batch_5']:
+        data_path = os.path.join(dataset_dir, na)
+        (x, y) = _load_file(data_path)
+        tr_x.append(x)
+        tr_y.append(y)
+    
+    tr_x = np.concatenate(tr_x, axis=0)
+    tr_y = np.concatenate(tr_y, axis=0)
+    
+    # load test data
+    data_path = os.path.join(dataset_dir, 'test_batch')
+    (te_x, te_y) = _load_file(data_path)
+    te_y = np.array(te_y)
+    
+    
+    # normalize data to [-1,1]
+    tr_x = (tr_x.astype(np.float32) - 128.) / 128.
+    te_x = (te_x.astype(np.float32) - 128.) / 128.
+    print(tr_x.dtype)
+    
+    return tr_x, tr_y, te_x, te_y
     
 def sparse_to_categorical(x, n_out):
     x = x.astype(int)   # force type to int
