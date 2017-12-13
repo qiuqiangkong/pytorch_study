@@ -4,6 +4,6 @@ Examples of basic pytorch usage methods.
 Author: Qiuqiang Kong (q.kong@surrey.ac.uk)
 
 ## Run
-python mnist_dnn_pt.py train
+CUDA_VISIBLE_DEVICES=0 python mnist_dnn_pt.py train
 
-python mnist_cnn_pt.py train
+CUDA_VISIBLE_DEVICES=0 python mnist_cnn_pt.py train
