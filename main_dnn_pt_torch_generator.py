@@ -2,7 +2,7 @@
 Summary:  mnist dnn pytorch example. 
           te_err around 2%. 
 Author:   Qiuqiang Kong
-Usage:    $ python mnist_dnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax --lr=1e-3
+Usage:    $ CUDA_VISIBLE_DEVICES=1 python test9.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax --lr=1e-3
           $ python mnist_dnn_pt.py train --init_type=glorot_uniform --optimizer=adam --loss=softmax --lr=1e-4 --resume_model_path="models/md_3000iters.tar"
 Created:  2017.12.09
 Modified: 2017.12.12
@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.data as data
 import torch.optim as optim
 from torch.autograd import Variable
 
@@ -27,23 +28,26 @@ def back_hook1(grad):
     print 'back_hook1'
     print grad
 
+class MNIST(data.Dataset):
+    def __init__(self, x, y):
+        self.x = torch.Tensor(x)
+        self.y = torch.LongTensor(y)
+    
+    def __getitem__(self, index):
+        return self.x[index], self.y[index]
+        
+    def __len__(self):
+        return len(self.x)
+
 class DNN(nn.Module):
     def __init__(self, loss_type):
         super(DNN, self).__init__()
         
         self.loss_type = loss_type
-        self.fc1 = nn.Linear(784, 500, bias=True)
-        self.fc2 = nn.Linear(500, 500, bias=True)
-        self.fc3 = nn.Linear(500, 500, bias=True)
-        self.fc4 = nn.Linear(500, 10, bias=True)
-    
-        # Init weights in this way. 
-        # self.init_weights()
-    
-    def init_weights(self):
-        initrange = 0.1
-        self.fc1.weight.data.uniform_(-initrange, initrange)
-        self.fc1.bias.data.fill_(0)
+        self.fc1 = nn.Linear(784, 500)
+        self.fc2 = nn.Linear(500, 500)
+        self.fc3 = nn.Linear(500, 500)
+        self.fc4 = nn.Linear(500, 10)
         
     def forward(self, x):
         drop_p = 0.2
@@ -63,15 +67,14 @@ class DNN(nn.Module):
         else:
             raise Exception("Incorrect loss_type!")
     
-def eval(model, gen, xs, ys, cuda):
+def eval(model, data_loader, cuda):
     model.eval()
     pred_all = []
     y_all = []
-    for (batch_x, batch_y) in gen.generate(xs=xs, ys=ys):
-        batch_x = torch.Tensor(batch_x)
-        if cuda:
-            batch_x = batch_x.cuda()
+    for (batch_x, batch_y) in data_loader:
         batch_x = Variable(batch_x, volatile=True)
+        if cuda:
+            batch_x = batch_x.cuda(async=True)
         pred = model(batch_x)
         pred = pred.data.cpu().numpy()
         pred_all.append(pred)
@@ -109,12 +112,21 @@ def train(model, init_weights, args):
     tr_y = pp_data.sparse_to_categorical(tr_y, n_out)
     te_y = pp_data.sparse_to_categorical(te_y, n_out)
     print("tr_x.shape:", tr_x.shape)
-    
-    # Scale
+
+    # Scale. 
     scaler = preprocessing.StandardScaler().fit(tr_x)
     tr_x = scaler.transform(tr_x)
     va_x = scaler.transform(va_x)
     te_x = scaler.transform(te_x)
+    
+    # Dataset. 
+    tr_set = MNIST(tr_x, tr_y)
+    te_set = MNIST(te_x, te_y)
+    batch_size = 500
+    tr_loader = torch.utils.data.DataLoader(tr_set, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
+    eval_tr_loader = torch.utils.data.DataLoader(tr_set, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True)
+    eval_te_loader = torch.utils.data.DataLoader(te_set, batch_size=batch_size, shuffle=True, num_workers=2)
+    print("%.2f iterations / epoch" % (tr_x.shape[0] / float(batch_size)))
     
     if os.path.isfile(resume_model_path):
         # Load weights. 
@@ -132,14 +144,6 @@ def train(model, init_weights, args):
     if cuda:
         model.cuda()
 
-    # Data generator. 
-    batch_size = 500
-    print("%.2f iterations / epoch" % (tr_x.shape[0] / float(batch_size)))
-    tr_gen = DataGenerator(batch_size=batch_size, type='train')
-    eval_tr_gen = DataGenerator(batch_size=batch_size, type='test', te_max_iter=20)
-    eval_te_gen = DataGenerator(batch_size=batch_size, type='test')
-    
-    
     # Optimizer. 
     if opt_type == 'sgd':
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
@@ -150,82 +154,84 @@ def train(model, init_weights, args):
     
     # Evaluate. 
     t_eval = time.time()
-    tr_err = eval(model, eval_tr_gen, [tr_x], [tr_y], cuda)
-    te_err = eval(model, eval_te_gen, [te_x], [te_y], cuda)
+    tr_err = eval(model, eval_tr_loader, cuda)
+    te_err = eval(model, eval_te_loader, cuda)
     print("Iter: %d, train err: %f, test err: %f, eval time: %s" % \
           (iter, tr_err, te_err, time.time() - t_eval))
     
     # Train. 
+    t1 = time.time()
     t_train = time.time()
-    for batch_x, batch_y in tr_gen.generate(xs=[tr_x], ys=[tr_y]):
-        # Move data to GPU. 
-        t1 = time.time()
-        batch_x = torch.Tensor(batch_x)
-        batch_y = torch.LongTensor(np.argmax(batch_y, axis=-1))
-        batch_y = torch.LongTensor(batch_y)
-        batch_x = Variable(batch_x)
-        batch_y = Variable(batch_y)
-        if cuda:
-            batch_x = batch_x.cuda()
-            batch_y = batch_y.cuda()
-        
-        if False:
-            print("Load data time:", time.time() - t1)
-        
-        # Print wights. 
-        if False:
-            print weights
-            print model.fc1
-            print model.fc1.weight
-        
-        # Forward. 
-        t1 = time.time()
-        model.train()
-        output = model(batch_x)
-        
-        # Loss. 
-        if loss_type == 'softmax':
-            loss = F.cross_entropy(output, batch_y)
-        elif loss_type == 'sigmoid':
-            F.binary_cross_entropy(output, batch_y)
-        else:
-            raise Exception("Incorrect loss_type!")
-            
-        # Backward. 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        if False:
-            print(model.fc2.weight.data)
-            print(model.fc2.weight.grad.data)
-            pause
+    while(True):
+        for (batch_x, batch_y) in tr_loader:
+            # Move data to GPU. 
+            # print(time.time() - t1)
+            (_, batch_y) = torch.max(batch_y, -1)
 
-        if False:
-            print("Train time:", time.time() - t1)
-        
-        iter += 1
-        
-        # Evaluate. 
-        loss_ary = []
-        if iter % 100 == 0:
-            t_eval = time.time()
-            tr_err = eval(model, eval_tr_gen, [tr_x], [tr_y], cuda)
-            te_err = eval(model, eval_te_gen, [te_x], [te_y], cuda)
-            print("Iter: %d, train err: %f, test err: %f, train time: %s, eval time: %s" % \
-                  (iter, tr_err, te_err, time.time() - t_train, time.time() - t_eval))
-            t_train = time.time()
-        
-        # Save model. 
-        if iter % 1000 == 0:
-            save_out_dict = {'iter': iter, 
-                             'state_dict': model.state_dict(), 
-                             'optimizer': optimizer.state_dict(), 
-                             'te_err': te_err, }
-            save_out_path = "models/md_%diters.tar" % iter
-            pp_data.create_folder(os.path.dirname(save_out_path))
-            torch.save(save_out_dict, save_out_path)
-            print("Save model to %s" % save_out_path)
+            if cuda:
+                batch_x = batch_x.cuda(async=True)
+                batch_y = batch_y.cuda(async=True)
+            batch_x = Variable(batch_x)
+            batch_y = Variable(batch_y)
+            
+            if False:
+                print("Load data time:", time.time() - t1)
+            
+            # Print wights. 
+            if False:
+                print weights
+                print model.fc1
+                print model.fc1.weight
+            
+            # Forward. 
+            while(1):
+                t2 = time.time()
+                model.train()
+                output = model(batch_x)
+                
+                # Loss. 
+                if loss_type == 'softmax':
+                    loss = F.cross_entropy(output, batch_y)
+                elif loss_type == 'sigmoid':
+                    F.binary_cross_entropy(output, batch_y)
+                else:
+                    raise Exception("Incorrect loss_type!")
+                    
+                # Backward. 
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                # Set to False to debug print training time per iteration. 
+                if True:
+                    break
+                else:
+                    print("Train time:", time.time() - t2)
+            
+            iter += 1
+            
+            # Evaluate. 
+            loss_ary = []
+            if iter % 100 == 0:
+                t_eval = time.time()
+                tr_err = eval(model, eval_tr_loader, cuda)
+                te_err = eval(model, eval_te_loader, cuda)
+                print("Iter: %d, train err: %f, test err: %f, train time: %s, eval time: %s" % \
+                      (iter, tr_err, te_err, time.time() - t_train, time.time() - t_eval))
+                t_train = time.time()
+            
+            # Save model. 
+            if iter % 1000 == 0:
+                save_out_dict = {'iter': iter, 
+                                'state_dict': model.state_dict(), 
+                                'optimizer': optimizer.state_dict(), 
+                                'te_err': te_err, }
+                save_out_path = "models/md_%diters.tar" % iter
+                pp_data.create_folder(os.path.dirname(save_out_path))
+                torch.save(save_out_dict, save_out_path)
+                print("Save model to %s" % save_out_path)
+    
+            t1 = time.time()
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
