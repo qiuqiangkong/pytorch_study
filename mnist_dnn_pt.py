@@ -42,8 +42,10 @@ def init_layer(layer):
     
     std = math.sqrt(2. / n)
     scale = std * math.sqrt(3.)
-    layer.weight.data.uniform_(-scale, scale)   # He init
-    layer.bias.data.fill_(0.)
+    layer.weight.data.uniform_(-scale, scale)
+    
+    if layer.bias is not None:
+        layer.bias.data.fill_(0.)
 
 def init_bn(bn):
     bn.weight.data.fill_(1.)
@@ -170,7 +172,7 @@ def train(args):
     resume_model_path = args.resume_model_path
     print("cuda:", cuda)
     
-    # Load data. 
+    # Load data
     (tr_x, tr_y, va_x, va_y, te_x, te_y) = pp_data.load_data()
 
     n_out = 10
@@ -199,17 +201,17 @@ def train(args):
     model = DNN(output_type)
     
     if os.path.isfile(resume_model_path):
-        # Load weights. 
+        # Load weights
         print("Loading checkpoint '%s'" % resume_model_path)
         checkpoint = torch.load(resume_model_path)
         model.load_state_dict(checkpoint['state_dict'])
         iter = checkpoint['iter']
     else:
-        # Randomly init weights. 
+        # Randomly init weights
         print("Train from random initialization. ")
         iter = 0
         
-    # Move model to GPU. 
+    # Move model to GPU
     if cuda:
         model.cuda()
 
@@ -220,7 +222,7 @@ def train(args):
     else:
         params = model.parameters()
 
-    # Data generator. 
+    # Data generator
     batch_size = 500
     print("%.2f iterations / epoch" % (tr_x.shape[0] / float(batch_size)))
     tr_gen = DataGenerator(batch_size=batch_size, type='train')
@@ -228,19 +230,19 @@ def train(args):
     eval_te_gen = DataGenerator(batch_size=batch_size, type='test')
     
     
-    # Optimizer. 
+    # Optimizer
     if opt_type == 'sgd':
         optimizer = optim.SGD(params, lr=lr, momentum=0.9)
     elif opt_type == 'adam':
-        optimizer = optim.Adam(params, lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+        optimizer = optim.Adam(params, lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.)
     else:
         raise Exception("Optimizer wrong!")
     
-    # Train. 
+    # Train
     t_train = time.time()
     for batch_x, batch_y in tr_gen.generate(xs=[tr_x], ys=[tr_y]):
         
-        # Evaluate. 
+        # Evaluate
         if iter % 100 == 0:
             t_eval = time.time()
             tr_err = evaluate(model, output_type, eval_tr_gen, [tr_x], [tr_y], cuda)
@@ -249,7 +251,7 @@ def train(args):
                   (iter, tr_err, te_err, time.time() - t_train, time.time() - t_eval))
             t_train = time.time()
 
-        # Move data to GPU. 
+        # Move data to GPU
         t_load = time.time()
         batch_x = move_x_to_gpu(batch_x, cuda)
         batch_y = move_y_to_gpu(batch_y, output_type, cuda)
@@ -257,18 +259,18 @@ def train(args):
         if False:
             print("Load data time:", time.time() - t_load)
         
-        # Print wights. 
+        # Print wights
         if False:
             print weights
             print model.fc1
             print model.fc1.weight
         
-        # Forward. 
+        # Forward
         t_forward = time.time()
         model.train()
         output = model(batch_x)
         
-        # Loss. 
+        # Loss
         if output_type == 'softmax':
             loss = F.nll_loss(output, batch_y)
         elif output_type == 'sigmoid':
@@ -276,7 +278,7 @@ def train(args):
         else:
             raise Exception("Incorrect output_type!")
             
-        # Backward. 
+        # Backward
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -291,7 +293,7 @@ def train(args):
         
         iter += 1
         
-        # Save model. 
+        # Save model
         if iter % 1000 == 0 and iter > 0:
             save_out_dict = {'iter': iter, 
                              'state_dict': model.state_dict(), 
@@ -308,7 +310,7 @@ def forward_in_batch(model, x, batch_size, cuda):
     batch_num = int(np.ceil(len(x) / float(batch_size)))
     output_all = []
     
-    for i1 in xrange(batch_num):
+    for i1 in range(batch_num):
         batch_x = x[i1 * batch_size : (i1 + 1) * batch_size]
         batch_x = move_x_to_gpu(batch_x, cuda, volatile=True)
         output = model(batch_x)
