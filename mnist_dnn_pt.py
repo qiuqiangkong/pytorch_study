@@ -29,8 +29,8 @@ from data_generator import DataGenerator
 
 
 def back_hook1(grad):
-    print 'back_hook1'
-    print grad
+    print('back_hook1')
+    print(grad)
 
 
 def init_layer(layer):
@@ -86,7 +86,7 @@ class DNN(nn.Module):
  
         if False:
             x3.register_hook(back_hook1)      # observe backward gradient
-            print x3          # observe forward
+            print(x3)          # observe forward
         
         if self.output_type == 'softmax':
             return F.log_softmax(x5, dim=-1)   # Return linear here and use F.nll_loss() later. 
@@ -130,13 +130,13 @@ def evaluate(model, output_type, gen, xs, ys, cuda):
     output_all = []
     target_all = []
     
-    iter = 0
-    max_iter = -1
+    iteration = 0
+    max_iteration = -1
     
     # Evaluate in mini-batch
     for (batch_x, batch_y) in gen.generate(xs=xs, ys=ys):
         
-        if iter == max_iter:
+        if iteration == max_iteration:
             break
         
         batch_x = move_x_to_gpu(batch_x, cuda, volatile=True)
@@ -149,7 +149,7 @@ def evaluate(model, output_type, gen, xs, ys, cuda):
         output_all.append(batch_output)
         target_all.append(batch_y)
         
-        iter += 1
+        iteration += 1
 
     output_all = torch.cat(output_all, dim=0)
     target_all = torch.cat(target_all, dim=0)
@@ -202,14 +202,14 @@ def train(args):
     
     if os.path.isfile(resume_model_path):
         # Load weights
-        print("Loading checkpoint '%s'" % resume_model_path)
+        print("Loading checkpoint {}".format(resume_model_path))
         checkpoint = torch.load(resume_model_path)
         model.load_state_dict(checkpoint['state_dict'])
-        iter = checkpoint['iter']
+        iteration = checkpoint['iteration']
     else:
         # Randomly init weights
         print("Train from random initialization. ")
-        iter = 0
+        iteration = 0
         
     # Move model to GPU
     if cuda:
@@ -224,7 +224,7 @@ def train(args):
 
     # Data generator
     batch_size = 500
-    print("%.2f iterations / epoch" % (tr_x.shape[0] / float(batch_size)))
+    print("{:.2f} iterations / epoch".format(tr_x.shape[0] / float(batch_size)))
     tr_gen = DataGenerator(batch_size=batch_size, type='train')
     eval_tr_gen = DataGenerator(batch_size=batch_size, type='test', te_max_iter=20)
     eval_te_gen = DataGenerator(batch_size=batch_size, type='test')
@@ -239,34 +239,35 @@ def train(args):
         raise Exception("Optimizer wrong!")
     
     # Train
-    t_train = time.time()
+    bgn_train_time = time.time()
     for batch_x, batch_y in tr_gen.generate(xs=[tr_x], ys=[tr_y]):
         
         # Evaluate
-        if iter % 100 == 0:
-            t_eval = time.time()
-            tr_err = evaluate(model, output_type, eval_tr_gen, [tr_x], [tr_y], cuda)
-            te_err = evaluate(model, output_type, eval_te_gen, [te_x], [te_y], cuda)
-            print("Iter: %d, train err: %f, test err: %f, train time: %s, eval time: %s" % \
-                  (iter, tr_err, te_err, time.time() - t_train, time.time() - t_eval))
-            t_train = time.time()
+        if iteration % 100 == 0:
+            fin_train_time = time.time()
+            eval_time = time.time()
+            tr_error = evaluate(model, output_type, eval_tr_gen, [tr_x], [tr_y], cuda)
+            te_error = evaluate(model, output_type, eval_te_gen, [te_x], [te_y], cuda)
+            print("Iteration: {}, train err: {}, test err: {}, train time: {}, eval time: {}".format(
+                  iteration, tr_error, te_error, fin_train_time - bgn_train_time, time.time() - eval_time))
+            bgn_train_time = time.time()
 
         # Move data to GPU
-        t_load = time.time()
+        load_time = time.time()
         batch_x = move_x_to_gpu(batch_x, cuda)
         batch_y = move_y_to_gpu(batch_y, output_type, cuda)
         
         if False:
-            print("Load data time:", time.time() - t_load)
+            print("Load data time: {}".format(time.time() - load_time))
         
         # Print wights
         if False:
-            print weights
-            print model.fc1
-            print model.fc1.weight
+            print(weights)
+            print(model.fc1)
+            print(model.fc1.weight)
         
         # Forward
-        t_forward = time.time()
+        forward_time = time.time()
         model.train()
         output = model(batch_x)
         
@@ -289,20 +290,20 @@ def train(args):
             pause
 
         if False:
-            print("Train time:", time.time() - t_forward)
+            print("Train time: {}".format(time.time() - forward_time))
         
-        iter += 1
+        iteration += 1
         
         # Save model
-        if iter % 1000 == 0 and iter > 0:
-            save_out_dict = {'iter': iter, 
+        if iteration % 1000 == 0 and iteration > 0:
+            save_out_dict = {'iteration': iteration, 
                              'state_dict': model.state_dict(), 
                              'optimizer': optimizer.state_dict(), 
-                             'te_err': te_err, }
-            save_out_path = "models/md_%d_iters.tar" % iter
+                             'te_error': te_error, }
+            save_out_path = "models/md_{}_iters.tar".format(iteration)
             pp_data.create_folder(os.path.dirname(save_out_path))
             torch.save(save_out_dict, save_out_path)
-            print("Save model to %s" % save_out_path)
+            print("Save model to {}".format(save_out_path))
         
 
 def forward_in_batch(model, x, batch_size, cuda):
@@ -322,7 +323,7 @@ def forward_in_batch(model, x, batch_size, cuda):
             
 def inference(args):
     output_type = args.output_type
-    iter = args.iteration
+    iteration = args.iteration
     cuda = args.use_cuda and torch.cuda.is_available()
     
     # Load data
@@ -345,7 +346,7 @@ def inference(args):
 
     # Load model
     model = DNN(output_type)
-    checkpoint = torch.load(os.path.join("models", "md_{}_iters.tar".format(iter)))
+    checkpoint = torch.load(os.path.join("models", "md_{}_iters.tar".format(iteration)))
     model.load_state_dict(checkpoint['state_dict'])
     
     if cuda:
