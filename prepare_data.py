@@ -7,8 +7,13 @@ Modified: 2016.07.19 Modify dataset path
 --------------------------------------
 '''
 import numpy as np
-import cPickle
+try:
+    import cPickle
+except:
+    import _pickle as cPickle
+import pickle
 import gzip
+import sys
 import os
 import matplotlib.pyplot as plt
 import torch
@@ -17,22 +22,46 @@ def create_folder(fd):
     if not os.path.exists(fd):
         os.makedirs(fd)
 
+
+def get_filename(path):
+    path = os.path.realpath(path)
+    na_ext = path.split('/')[-1]
+    na = os.path.splitext(na_ext)[0]
+    return na
+
+
+def cpickle_load(f):
+    if sys.version_info.major == 2:
+        return cPickle.load(f)
+    elif sys.version_info.major == 3:
+        return cPickle.load(f, encoding='latin1')
+        
+
+def pickle_load(f):
+    if sys.version_info.major == 2:
+        return pickle.load(f)
+    elif sys.version_info.major == 3:
+        return pickle.load(f, encoding='latin1')
+
+
 def load_data():
     dataset = 'mnist.pkl.gz'
     if not os.path.isfile(dataset):
         from six.moves import urllib
-        print 'downloading data ... (16.2 Mb)'
+        print('downloading data ... (16.2 Mb)')
         urllib.request.urlretrieve( 'http://www.iro.umontreal.ca/~lisa/deep/data/mnist/mnist.pkl.gz', dataset )
         
-    f = gzip.open( dataset, 'rb' )
-    train_set, valid_set, test_set = cPickle.load(f)
+    
+        
+    f = gzip.open( dataset,'rb')
+    train_set, valid_set, test_set = cpickle_load(f)
     [tr_X, tr_y] = train_set
     [va_X, va_y] = valid_set
     [te_X, te_y] = test_set
     f.close()
     return tr_X, tr_y, va_X, va_y, te_X, te_y
 
-
+load_mnist = load_data
 
 # Load cifar data. 
 def load_cifar10():
@@ -75,7 +104,7 @@ def load_imdb(path="imdb.pkl", nb_words=None, skip_top=0,
 
     if not os.path.isfile(path):
         from six.moves import urllib
-        print 'downloading data ... (15.3 Mb)'
+        print('downloading data ... (15.3 Mb)')
         urllib.request.urlretrieve( 'https://s3.amazonaws.com/text-datasets/imdb.pkl', path )
 
     if path.endswith(".gz"):
