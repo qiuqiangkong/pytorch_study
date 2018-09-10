@@ -24,8 +24,8 @@ import torch.utils.data as data
 import torch.optim as optim
 from torch.autograd import Variable
 
-import prepare_data as pp_data
-from data_generator import DataGenerator
+from utilities import load_data, sparse_to_categorical, create_folder, calculate_accuracy
+from data_generator import DataGenerator, TestDataGenerator
 
 
 def back_hook1(grad):
@@ -62,9 +62,9 @@ class DNN(nn.Module):
         self.fc3 = nn.Linear(n_hid, n_hid, bias=True)
         self.fc4 = nn.Linear(n_hid, 10, bias=True)
         
-        self.bn1 = nn.BatchNorm2d(n_hid)
-        self.bn2 = nn.BatchNorm2d(n_hid)
-        self.bn3 = nn.BatchNorm2d(n_hid)
+        self.bn1 = nn.BatchNorm1d(n_hid)
+        self.bn2 = nn.BatchNorm1d(n_hid)
+        self.bn3 = nn.BatchNorm1d(n_hid)
     
         self.init_weights()
     
@@ -93,31 +93,28 @@ class DNN(nn.Module):
         elif self.output_type == 'sigmoid':
             return F.sigmoid(x5)    # Use F.binary_cross_entropy() later. 
         else:
-            raise Exception("Incorrect output_type!")
+            raise Exception('Incorrect output_type!')
             
     def freeze_layer(self, layer):
         for param in layer.parameters():
             param.requires_grad = False
     
     
-def move_x_to_gpu(x, cuda, volatile=False):
-    x = torch.Tensor(x)
+def move_data_to_gpu(x, cuda):
+
+    if 'float' in str(x.dtype):
+        x = torch.Tensor(x)
+
+    elif 'int' in str(x.dtype):
+        x = torch.LongTensor(x)
+
+    else:
+        raise Exception('Error!')
+
     if cuda:
         x = x.cuda()
-    x = Variable(x, volatile=volatile)
-    return x
-    
 
-def move_y_to_gpu(y, output_type, cuda, volatile=False):
-    if output_type == 'softmax':
-        y = torch.LongTensor(y)
-    elif output_type == 'sigmoid':
-        y = torch.Tensor(y)
-        
-    if cuda:
-        y = y.cuda()
-    y = Variable(y, volatile=volatile)
-    return y
+    return x
     
     
 def calculate_error(output, target):
@@ -125,90 +122,131 @@ def calculate_error(output, target):
     return error
     
     
-def evaluate(model, output_type, gen, xs, ys, cuda):
-    model.eval()
-    output_all = []
-    target_all = []
+def evaluate(model, generator, data_type, max_iteration, cuda):
+    """Evaluate
     
-    iteration = 0
-    max_iteration = -1
+    Args:
+      model: object.
+      generator: object.
+      data_type: 'train' | 'validate'.
+      max_iteration: int, maximum iteration for validation
+      cuda: bool.
+      
+    Returns:
+      accuracy: float
+    """
     
-    # Evaluate in mini-batch
-    for (batch_x, batch_y) in gen.generate(xs=xs, ys=ys):
-        
-        if iteration == max_iteration:
-            break
-        
-        batch_x = move_x_to_gpu(batch_x, cuda, volatile=True)
-        batch_y = move_y_to_gpu(batch_y, output_type, cuda, volatile=True)
-        
-        batch_output = model(batch_x)
-        
-        (_, batch_output) = torch.max(batch_output, dim=-1)
-        
-        output_all.append(batch_output)
-        target_all.append(batch_y)
-        
-        iteration += 1
+    # Generate function
+    generate_func = generator.generate_validate(data_type=data_type, 
+                                                shuffle=True, 
+                                                max_iteration=max_iteration)
+            
+    # Forward
+    dict = forward(model=model, 
+                   generate_func=generate_func, 
+                   cuda=cuda, 
+                   return_target=True)
 
-    output_all = torch.cat(output_all, dim=0)
-    target_all = torch.cat(target_all, dim=0)
+    outputs = dict['output']    # (audios_num, classes_num)
+    targets = dict['target']    # (audios_num, classes_num)
+
+    predictions = np.argmax(outputs, axis=-1)   # (audios_num,)
+
+    # Evaluate
+    classes_num = outputs.shape[-1]
     
-    if output_type == 'sigmoid':
-        (_, target_all) = torch.max(target_all, dim=-1)
+    loss = F.nll_loss(torch.Tensor(outputs), torch.LongTensor(targets)).numpy()
+    loss = float(loss)
+    
+    accuracy = calculate_accuracy(targets, predictions)
+
+    return accuracy, loss
+
+
+def forward(model, generate_func, cuda, return_target):
+    """Forward data to a model.
+    
+    Args:
+      generate_func: generate function
+      cuda: bool
+      return_target: bool
+      
+    Returns:
+      dict, keys: 'audio_name', 'output'; optional keys: 'target'
+    """
+    
+    outputs = []
+    audio_names = []
+    
+    if return_target:
+        targets = []
+    
+    # Evaluate on mini-batch
+    for data in generate_func:
+            
+        if return_target:
+            (batch_x, batch_y, batch_audio_names) = data
+            
+        else:
+            (batch_x, batch_audio_names) = data
+            
+        batch_x = move_data_to_gpu(batch_x, cuda)
         
-    error = calculate_error(output_all, target_all)
-    error = error.data.cpu().numpy()[0]
+        # Predict
+        model.eval()
+        batch_output = model(batch_x)
+
+        # Append data
+        outputs.append(batch_output.data.cpu().numpy())
+        audio_names.append(batch_audio_names)
         
-    return error
-          
+        if return_target:
+            targets.append(batch_y)
+
+    dict = {}
+
+    outputs = np.concatenate(outputs, axis=0)
+    dict['output'] = outputs
+    
+    audio_names = np.concatenate(audio_names, axis=0)
+    dict['audio_name'] = audio_names
+    
+    if return_target:
+        targets = np.concatenate(targets, axis=0)
+        dict['target'] = targets
+        
+    return dict
+    
     
 def train(args):
-    cuda = args.use_cuda and torch.cuda.is_available()
+
+    # Arguments & parameters
     opt_type = args.optimizer
     output_type = args.output_type
     lr = args.lr
     freeze = args.freeze
     resume_model_path = args.resume_model_path
-    print("cuda:", cuda)
+    cuda = args.cuda
+    print('cuda:', cuda)
     
-    # Load data
-    (tr_x, tr_y, va_x, va_y, te_x, te_y) = pp_data.load_data()
-
     n_out = 10
-    
-    if output_type == 'sigmoid':
-        tr_y = pp_data.sparse_to_categorical(tr_y, n_out)
-        te_y = pp_data.sparse_to_categorical(te_y, n_out)
-        
-    print("tr_x.shape:", tr_x.shape)
-    
-    tr_x = tr_x.astype(np.float32)
-    va_x = va_x.astype(np.float32)
-    te_x = te_x.astype(np.float32)
-    tr_y = tr_y.astype(np.int64)
-    va_y = va_y.astype(np.int64)
-    te_y = te_y.astype(np.int64)
-    
-    # Scale
-    scaler = preprocessing.StandardScaler().fit(tr_x)
-    tr_x = scaler.transform(tr_x)
-    va_x = scaler.transform(va_x)
-    te_x = scaler.transform(te_x)
-    print(tr_x.dtype, tr_y.dtype)
+
+    # Paths
+    models_dir = 'models'
+    create_folder(models_dir)
     
     # Model
     model = DNN(output_type)
     
     if os.path.isfile(resume_model_path):
         # Load weights
-        print("Loading checkpoint {}".format(resume_model_path))
+        print('Loading checkpoint {}'.format(resume_model_path))
         checkpoint = torch.load(resume_model_path)
         model.load_state_dict(checkpoint['state_dict'])
         iteration = checkpoint['iteration']
     else:
         # Randomly init weights
-        print("Train from random initialization. ")
+        print('Train from random initialization. ')
         iteration = 0
         
     # Move model to GPU
@@ -224,11 +262,7 @@ def train(args):
 
     # Data generator
     batch_size = 500
-    print("{:.2f} iterations / epoch".format(tr_x.shape[0] / float(batch_size)))
-    tr_gen = DataGenerator(batch_size=batch_size, type='train')
-    eval_tr_gen = DataGenerator(batch_size=batch_size, type='test', te_max_iter=20)
-    eval_te_gen = DataGenerator(batch_size=batch_size, type='test')
-    
+    generator = DataGenerator(batch_size=batch_size)
     
     # Optimizer
     if opt_type == 'sgd':
@@ -236,29 +270,29 @@ def train(args):
     elif opt_type == 'adam':
         optimizer = optim.Adam(params, lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.)
     else:
-        raise Exception("Optimizer wrong!")
+        raise Exception('Optimizer wrong!')
     
     # Train
     bgn_train_time = time.time()
-    for batch_x, batch_y in tr_gen.generate(xs=[tr_x], ys=[tr_y]):
-        
+    for iteration, (batch_x, batch_y) in enumerate(generator.generate_train()):
+                
         # Evaluate
         if iteration % 100 == 0:
             fin_train_time = time.time()
             eval_time = time.time()
-            tr_error = evaluate(model, output_type, eval_tr_gen, [tr_x], [tr_y], cuda)
-            te_error = evaluate(model, output_type, eval_te_gen, [te_x], [te_y], cuda)
-            print("Iteration: {}, train err: {}, test err: {}, train time: {}, eval time: {}".format(
-                  iteration, tr_error, te_error, fin_train_time - bgn_train_time, time.time() - eval_time))
+            (tr_acc, tr_loss) = evaluate(model, generator, data_type='train', max_iteration=None, cuda=cuda)
+            (va_acc, va_loss) = evaluate(model, generator, data_type='validate', max_iteration=None, cuda=cuda)
+            print('Iteration: {}, train acc: {}, test acc: {}, train time: {}, eval time: {}'.format(
+                  iteration, tr_acc, va_acc, fin_train_time - bgn_train_time, time.time() - eval_time))
             bgn_train_time = time.time()
 
         # Move data to GPU
         load_time = time.time()
-        batch_x = move_x_to_gpu(batch_x, cuda)
-        batch_y = move_y_to_gpu(batch_y, output_type, cuda)
+        batch_x = move_data_to_gpu(batch_x, cuda)
+        batch_y = move_data_to_gpu(batch_y, cuda)
         
         if False:
-            print("Load data time: {}".format(time.time() - load_time))
+            print('Load data time: {}'.format(time.time() - load_time))
         
         # Print wights
         if False:
@@ -277,7 +311,7 @@ def train(args):
         elif output_type == 'sigmoid':
             loss = F.binary_cross_entropy(output, batch_y)
         else:
-            raise Exception("Incorrect output_type!")
+            raise Exception('Incorrect output_type!')
             
         # Backward
         optimizer.zero_grad()
@@ -290,7 +324,7 @@ def train(args):
             pause
 
         if False:
-            print("Train time: {}".format(time.time() - forward_time))
+            print('Train time: {}'.format(time.time() - forward_time))
         
         iteration += 1
         
@@ -298,12 +332,10 @@ def train(args):
         if iteration % 1000 == 0 and iteration > 0:
             save_out_dict = {'iteration': iteration, 
                              'state_dict': model.state_dict(), 
-                             'optimizer': optimizer.state_dict(), 
-                             'te_error': te_error, }
-            save_out_path = "models/md_{}_iters.tar".format(iteration)
-            pp_data.create_folder(os.path.dirname(save_out_path))
+                             'optimizer': optimizer.state_dict()}
+            save_out_path = os.path.join(models_dir, 'md_{}_iters.tar'.format(iteration))
             torch.save(save_out_dict, save_out_path)
-            print("Save model to {}".format(save_out_path))
+            print('Save model to {}'.format(save_out_path))
         
 
 def forward_in_batch(model, x, batch_size, cuda):
@@ -322,50 +354,28 @@ def forward_in_batch(model, x, batch_size, cuda):
             
             
 def inference(args):
+    
     output_type = args.output_type
     iteration = args.iteration
-    cuda = args.use_cuda and torch.cuda.is_available()
+    cuda = args.cuda
     
-    # Load data
-    (tr_x, tr_y, va_x, va_y, te_x, te_y) = pp_data.load_data()
-    tr_x = tr_x.astype(np.float32)
-    va_x = va_x.astype(np.float32)
-    te_x = te_x.astype(np.float32)
-    tr_y = tr_y.astype(np.int64)
-    va_y = va_y.astype(np.int64)
-    te_y = te_y.astype(np.int64)
-
-    # Scale
-    scaler = preprocessing.StandardScaler().fit(tr_x)
-    tr_x = scaler.transform(tr_x)
-    te_x = scaler.transform(te_x)
-
-    if output_type == 'sigmoid':
-        n_out = 10
-        te_y = pp_data.sparse_to_categorical(te_y, n_out)
+    batch_size = 500
+    generator = TestDataGenerator(batch_size)
 
     # Load model
     model = DNN(output_type)
-    checkpoint = torch.load(os.path.join("models", "md_{}_iters.tar".format(iteration)))
+    checkpoint = torch.load(os.path.join('models', 'md_{}_iters.tar'.format(iteration)))
     model.load_state_dict(checkpoint['state_dict'])
     
     if cuda:
         model.cuda()
 
     # Inference
-    batch_size = 128
-    output = forward_in_batch(model, te_x, batch_size, cuda)
-    (_, output) = torch.max(output, dim=-1)
+    generate_func = generator.generate_test()
+    dict = forward(model, generate_func, cuda, return_target=False)
+    outputs = dict['output']
     
-    # Calculate error
-    target = move_y_to_gpu(te_y, output_type, cuda)
-    
-    if output_type == 'sigmoid':
-        (_, target) = torch.max(target, dim=-1)
-
-    error = calculate_error(output, target)
-    error = error.data.cpu().numpy()[0]
-    print("Error:", error)
+    predictions = np.argmax(outputs, axis=-1)
     
     
 if __name__ == '__main__':
@@ -373,17 +383,17 @@ if __name__ == '__main__':
     subparsers = parser.add_subparsers(dest='mode')
 
     parser_train = subparsers.add_parser('train')
-    parser_train.add_argument('--use_cuda', action='store_true', default=True)
     parser_train.add_argument('--optimizer', default='adam', choices=['sgd', 'adam'])
     parser_train.add_argument('--output_type', default='softmax', choices=['softmax', 'sigmoid'])
     parser_train.add_argument('--lr', type=float, default=1e-3)
     parser_train.add_argument('--freeze', action='store_true', default=False)
-    parser_train.add_argument('--resume_model_path', type=str, default="")
+    parser_train.add_argument('--resume_model_path', type=str, default='')
+    parser_train.add_argument('--cuda', action='store_true', default=False)
     
     parser_inference = subparsers.add_parser('inference')
-    parser_inference.add_argument('--use_cuda', action='store_true', default=True)
     parser_inference.add_argument('--output_type', default='softmax', choices=['softmax', 'sigmoid'])
-    parser_inference.add_argument('--iteration', type=str, default="")
+    parser_inference.add_argument('--iteration', type=str, required=True)
+    parser_inference.add_argument('--cuda', action='store_true', default=False)
     
     args = parser.parse_args()
     print(args)
