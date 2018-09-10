@@ -286,6 +286,15 @@ def train(args):
                   iteration, tr_acc, va_acc, fin_train_time - bgn_train_time, time.time() - eval_time))
             bgn_train_time = time.time()
 
+        # Save model
+        if iteration % 1000 == 0 and iteration > 0:
+            save_out_dict = {'iteration': iteration, 
+                             'state_dict': model.state_dict(), 
+                             'optimizer': optimizer.state_dict()}
+            save_out_path = os.path.join(models_dir, 'md_{}_iters.tar'.format(iteration))
+            torch.save(save_out_dict, save_out_path)
+            print('Save model to {}'.format(save_out_path))
+
         # Move data to GPU
         load_time = time.time()
         batch_x = move_data_to_gpu(batch_x, cuda)
@@ -328,30 +337,6 @@ def train(args):
         
         iteration += 1
         
-        # Save model
-        if iteration % 1000 == 0 and iteration > 0:
-            save_out_dict = {'iteration': iteration, 
-                             'state_dict': model.state_dict(), 
-                             'optimizer': optimizer.state_dict()}
-            save_out_path = os.path.join(models_dir, 'md_{}_iters.tar'.format(iteration))
-            torch.save(save_out_dict, save_out_path)
-            print('Save model to {}'.format(save_out_path))
-        
-
-def forward_in_batch(model, x, batch_size, cuda):
-    model.eval()
-    batch_num = int(np.ceil(len(x) / float(batch_size)))
-    output_all = []
-    
-    for i1 in range(batch_num):
-        batch_x = x[i1 * batch_size : (i1 + 1) * batch_size]
-        batch_x = move_x_to_gpu(batch_x, cuda, volatile=True)
-        output = model(batch_x)
-        output_all.append(output)
-    
-    output_all = torch.cat(output_all, dim=0)
-    return output_all
-            
             
 def inference(args):
     
@@ -360,11 +345,14 @@ def inference(args):
     cuda = args.cuda
     
     batch_size = 500
+    
+    models_dir = os.path.join(workspace, 'models')
+    
     generator = TestDataGenerator(batch_size)
 
     # Load model
     model = DNN(output_type)
-    checkpoint = torch.load(os.path.join('models', 'md_{}_iters.tar'.format(iteration)))
+    checkpoint = torch.load(os.path.join(models_dir, 'md_{}_iters.tar'.format(iteration)))
     model.load_state_dict(checkpoint['state_dict'])
     
     if cuda:
