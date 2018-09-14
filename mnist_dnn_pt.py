@@ -221,6 +221,7 @@ def forward(model, generate_func, cuda, return_target):
 def train(args):
 
     # Arguments & parameters
+    workspace = args.workspace
     opt_type = args.optimizer
     output_type = args.output_type
     lr = args.lr
@@ -232,7 +233,7 @@ def train(args):
     n_out = 10
 
     # Paths
-    models_dir = 'models'
+    models_dir = os.path.join(workspace, 'models')
     create_folder(models_dir)
     
     # Model
@@ -287,7 +288,7 @@ def train(args):
             bgn_train_time = time.time()
 
         # Save model
-        if iteration % 1000 == 0 and iteration > 0:
+        if iteration % 1000 == 0:
             save_out_dict = {'iteration': iteration, 
                              'state_dict': model.state_dict(), 
                              'optimizer': optimizer.state_dict()}
@@ -340,6 +341,8 @@ def train(args):
             
 def inference(args):
     
+    # Arguments & parameters
+    workspace = args.workspace
     output_type = args.output_type
     iteration = args.iteration
     cuda = args.cuda
@@ -371,6 +374,7 @@ if __name__ == '__main__':
     subparsers = parser.add_subparsers(dest='mode')
 
     parser_train = subparsers.add_parser('train')
+    parser_train.add_argument('--workspace', default='')
     parser_train.add_argument('--optimizer', default='adam', choices=['sgd', 'adam'])
     parser_train.add_argument('--output_type', default='softmax', choices=['softmax', 'sigmoid'])
     parser_train.add_argument('--lr', type=float, default=1e-3)
@@ -379,6 +383,7 @@ if __name__ == '__main__':
     parser_train.add_argument('--cuda', action='store_true', default=False)
     
     parser_inference = subparsers.add_parser('inference')
+    parser_inference.add_argument('--workspace', default='')
     parser_inference.add_argument('--output_type', default='softmax', choices=['softmax', 'sigmoid'])
     parser_inference.add_argument('--iteration', type=str, required=True)
     parser_inference.add_argument('--cuda', action='store_true', default=False)
