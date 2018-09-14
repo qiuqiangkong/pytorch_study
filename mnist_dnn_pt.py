@@ -336,8 +336,6 @@ def train(args):
         if False:
             print('Train time: {}'.format(time.time() - forward_time))
         
-        iteration += 1
-        
             
 def inference(args):
     
