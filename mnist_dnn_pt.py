@@ -27,6 +27,11 @@ from torch.autograd import Variable
 from utilities import load_data, sparse_to_categorical, create_folder, calculate_accuracy
 from data_generator import DataGenerator, TestDataGenerator
 
+seed = 1234
+torch.manual_seed(seed)
+torch.cuda.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+
 
 def back_hook1(grad):
     print('back_hook1')

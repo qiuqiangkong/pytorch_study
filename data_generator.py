@@ -22,6 +22,7 @@ class DataGenerator(object):
         # Load data
         
         (self.train_x, self.train_y, self.validate_x, self.validate_y, _, _) = load_data()
+        print(self.train_x.shape, self.validate_x.shape)
         
         self.train_audio_names = np.arange(len(self.train_x))
         self.validate_audio_names = np.arange(len(self.validate_x))
